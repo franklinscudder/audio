@@ -3,10 +3,35 @@ import numpy as np
 import sounddevice as sd
 import scipy.signal as sig
 import time
+import mido
 
 t0 = 0
-blockTime = 0.1
+blockTime = 0.01
 blockSize = int(44100 * blockTime)
+
+class passFilter:
+    def __init__(self, src, fc, fs, mode="low"):
+        self.src = src
+        self.fc = fc
+        self.fs = fs
+        self.mode = mode
+        w = fc / (fs / 2) 
+        self.b, self.a = sig.butter(5, w, mode)
+    
+    def setMode(self, mode):
+        self.mode = mode
+        w = self.fc / (self.fs / 2) 
+        self.b, self.a = sig.butter(5, w, mode)
+        
+    def setFc(self, fc):
+        self.fc = fc
+        w = fc / (self.fs / 2) 
+        self.b, self.a = sig.butter(5, w, self.mode)
+    
+    def nextN(self, n):
+        inp = self.src.nextN(n)
+        out = sig.filtfilt(self.b, self.a, inp)
+        return out
 
 class mixer:
     def __init__(self, src, mix):
@@ -16,7 +41,7 @@ class mixer:
     def nextN(self, n):
         samples = [s.nextN(n) for s in self.src]
         mix = sum([s*self.mix[i] for i, s in enumerate(samples)])
-        mix = mix/mix.max()
+        mix = mix/sum(self.mix)
         return mix
         
 class envelope:
@@ -73,7 +98,7 @@ class envelope:
                 else:
                     out[i] = 0
                     i+=1
-        
+                    
         return out
         
 
@@ -136,31 +161,38 @@ class sawOsc(sineOsc):
     
     def setWidth(self, w):
         self.wave = sig.sawtooth(np.linspace(0, 2*np.pi, int(fs/f)), w)
-     
+ 
+def noteToFreq(note):
+    return (2**((note-69)/12))*440
+ 
+def midi_callback(message):
+    if message.type == "note_on":
+        for osc in OSCS:
+            osc.setF(noteToFreq(message.note))
+        env.trig()
+    
+    if message.type == "note_off":
+        env.rel()
 
-def callback(outdata, frames, time, flags):
-    global t0
-    global mix
-    
-    t = time.outputBufferDacTime
-    if not t0:
-        t0 = t
-    t = t - t0
-    
-    outdata[:,0] = env.nextN(blockSize)
+def audio_callback(outdata, frames, time, flags):
+    outdata[:,0] = fil.nextN(blockSize)
     return None
 
-outStream = sd.OutputStream(samplerate=44100, blocksize=blockSize, channels=1, callback=callback)
-mix = mixer([sineOsc(125, 44100), squareOsc(500, 44100)],[0.5,0.5])
+outStream = sd.OutputStream(samplerate=44100, blocksize=blockSize, channels=1, callback=audio_callback)
+sinosc = sineOsc(250, 44100)
+squosc = squareOsc(250, 44100)
+OSCS = [sinosc,squosc]
+mix = mixer(OSCS ,[0.5,0.5])
 env = envelope(0.1,0.5,0.2,0.7, mix, 44100)
-f = 500
+fil = passFilter(env, 500, 44100)
+
+print(mido.get_input_names())
+port = mido.open_input(callback=midi_callback)
+
 with outStream:
     while 1:
-        i = input("t or r: ")
-        if i == "t":
-            env.trig()
-        if i == "r":
-            env.rel()
+        fc = float(input("cutoff: "))
+        fil.setFc(fc)
         
         
 
