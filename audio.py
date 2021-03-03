@@ -4,6 +4,7 @@ import sounddevice as sd
 import scipy.signal as sig
 import time
 import mido
+from matplotlib import pyplot as plt
 
 class attenuverter:
     def __init__(self, src, fac):
@@ -11,7 +12,7 @@ class attenuverter:
         self.fac = fac
         
     def nextN(self, n):
-        return np.clip(self.src.nextN(n) * self.fac, -0.999, 0.999)
+        return np.clip(self.src.nextN(n) * self.fac)
 
 class distortion:
     def __init__(self, src, amt):
@@ -137,22 +138,25 @@ class sineOsc:
         self.fs = fs
         self.f = f
         self.idx = 0
-        self.phase = self.idx / (fs/f)
+        self.phase = (self.idx / self.samples) * 2 * np.pi
         self._type = "osc"
     
     def setF(self, f):
         self.wave = np.sin(np.linspace(0, 2*np.pi, int(self.fs/f)))
         self.samples = len(self.wave)
+        self.idx = int((self.phase/2*np.pi) *  self.samples)
         self.f = f
-        self.idx = int(self.phase *  (self.fs/self.f))
+        
     
     def nextN(self, n):
         out = []
         for i in range(n):
-            out.append(self.wave[(i+self.idx)%self.samples])
+            out.append(self.wave[self.idx])
+            self.idx += 1
+            self.idx = self.idx % self.samples
+            print(self.idx)
         
-        self.idx = (self.idx + n)%self.samples
-        self.phase = (self.idx / (self.fs/self.f))%(2*np.pi)
+        self.phase = (self.idx / self.samples) * 2 * np.pi
         return np.array(out)
 
 class squareOsc(sineOsc):
@@ -204,12 +208,15 @@ class synth:
         self.output = None
         self.audioStream = sd.OutputStream(samplerate=fs, blocksize=self.blockSize, channels=1, callback=self.audio_callback)
         self.midiPort = mido.open_input(callback=self.midi_callback)
+        self.wave = np.zeros(self.blockSize*2)
     
     def audio_callback(self, outdata, frames, time, flags):
         if self.output:
             o = self.output.nextN(self.blockSize)
             outdata[:,0] = o - np.mean(o)
-            
+            self.wave[self.blockSize:] = self.wave[:-self.blockSize]
+            self.wave[:self.blockSize] = o
+             
         return None
         
     def midi_callback(self, message):
@@ -241,7 +248,10 @@ class synth:
         with self.audioStream:
             print("Synth ready!")
             while 1:
-                pass
+                plt.cla()
+                plt.plot(self.wave)
+                plt.show()
+                plt.pause(0.001)
 
 
 def noteToFreq(note):
@@ -251,7 +261,7 @@ def noteToFreq(note):
 
 
 
-
+plt.ion()
 sinosc = sineOsc(250, 44100)
 squosc = squareOsc(250, 44100)
 OSCS = [squosc]
@@ -262,7 +272,7 @@ fil = passFilter(dist, 10000, 44100)
 
 
 syn = synth(44100, 0.05)
-syn.setModulesSeries([sinosc, env, dist, fil])
+syn.setModulesSeries([sinosc, env])
 syn.run()
 
         
