@@ -12,7 +12,7 @@ class attenuverter:
         self.fac = fac
         
     def nextN(self, n):
-        return np.clip(self.src.nextN(n) * self.fac)
+        return np.clip(self.src.nextN(n) * self.fac, -0.999, 0.999)
 
 class distortion:
     def __init__(self, src, amt):
