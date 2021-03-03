@@ -5,9 +5,8 @@ import scipy.signal as sig
 import time
 import mido
 
-t0 = 0
-blockTime = 0.01
-blockSize = int(44100 * blockTime)
+
+
 
 class passFilter:
     def __init__(self, src, fc, fs, mode="low"):
@@ -17,6 +16,8 @@ class passFilter:
         self.mode = mode
         w = fc / (fs / 2) 
         self.b, self.a = sig.butter(5, w, mode)
+        
+        self.initial = sig.lfiltic(self.b, self.a, np.zeros(1), np.zeros(1))
     
     def setMode(self, mode):
         self.mode = mode
@@ -29,8 +30,11 @@ class passFilter:
         self.b, self.a = sig.butter(5, w, self.mode)
     
     def nextN(self, n):
+        
         inp = self.src.nextN(n)
-        out = sig.filtfilt(self.b, self.a, inp)
+        out, zf = sig.lfilter(self.b, self.a, inp, zi=self.initial)
+        self.initial = zf
+        
         return out
 
 class mixer:
@@ -77,28 +81,27 @@ class envelope:
     def nextN(self, n):
         inp = self.src.nextN(n)
         i=0
-        out = np.empty(n)
+        out = np.zeros(n)
         while i < n:
             if self.triggered:
                 if self.trigIdx < self.adlen:
                     out[i] = inp[i] * self.ad[self.trigIdx]
-                    i += 1
+                    self.currentLevel = self.ad[self.trigIdx]
                     self.trigIdx += 1
                 
                 else:
                     out[i] = inp[i] * self.S
-                    i+=1
-                
+                       
             if self.releasing:
                 if self.relIdx < self.rlen:
-                    out[i] = inp[i] * self.r[self.relIdx]
-                    i += 1
+                    out[i] = inp[i] * self.r[self.relIdx] * (self.currentLevel/self.S)
                     self.relIdx += 1
                 
                 else:
                     out[i] = 0
-                    i+=1
                     
+            i += 1
+            
         return out
         
 
@@ -161,38 +164,61 @@ class sawOsc(sineOsc):
     
     def setWidth(self, w):
         self.wave = sig.sawtooth(np.linspace(0, 2*np.pi, int(fs/f)), w)
- 
+
+class synth:
+    def __init__(self, fs, blockTime):
+        self.fs = fs
+        self.blockTime = blockTime
+        self.blockSize = int(fs * blockTime)
+        self.oscs = [squareOsc(440, fs)]
+        self.envs = [envelope(3,0.5,0.2,0.7, self.oscs[0], fs)]
+        self.others = []
+        self.output = self.envs[0]
+        self.audioStream = sd.OutputStream(samplerate=fs, blocksize=self.blockSize, channels=1, callback=self.audio_callback)
+        self.midiPort = mido.open_input(callback=self.midi_callback)
+    
+    def audio_callback(self, outdata, frames, time, flags):
+        o = self.output.nextN(self.blockSize)
+        outdata[:,0] = o - np.mean(o)
+        return None
+        
+    def midi_callback(self, message):
+        if message.type == "note_on":
+            for osc in self.oscs:
+                osc.setF(noteToFreq(message.note))
+                
+            for env in self.envs:
+                env.trig()
+    
+        if message.type == "note_off":
+            for env in self.envs:
+                env.rel()
+    
+    def run(self):
+        with self.audioStream:
+            while 1:
+                pass
+
+
 def noteToFreq(note):
     return (2**((note-69)/12))*440
  
-def midi_callback(message):
-    if message.type == "note_on":
-        for osc in OSCS:
-            osc.setF(noteToFreq(message.note))
-        env.trig()
-    
-    if message.type == "note_off":
-        env.rel()
 
-def audio_callback(outdata, frames, time, flags):
-    outdata[:,0] = fil.nextN(blockSize)
-    return None
 
-outStream = sd.OutputStream(samplerate=44100, blocksize=blockSize, channels=1, callback=audio_callback)
+
+
+
 sinosc = sineOsc(250, 44100)
 squosc = squareOsc(250, 44100)
-OSCS = [sinosc,squosc]
+OSCS = [squosc]
 mix = mixer(OSCS ,[0.5,0.5])
 env = envelope(0.1,0.5,0.2,0.7, mix, 44100)
 fil = passFilter(env, 500, 44100)
 
-print(mido.get_input_names())
-port = mido.open_input(callback=midi_callback)
 
-with outStream:
-    while 1:
-        fc = float(input("cutoff: "))
-        fil.setFc(fc)
+syn = synth(44100, 0.05)
+syn.run()
+
         
         
 
