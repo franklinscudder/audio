@@ -5,11 +5,32 @@ import scipy.signal as sig
 import time
 import mido
 
+class attenuverter:
+    def __init__(self, src, fac):
+        self.src = src
+        self.fac = fac
+        
+    def nextN(self, n):
+        return np.clip(self.src.nextN(n) * self.fac, -0.999, 0.999)
 
-
-
+class distortion:
+    def __init__(self, src, amt):
+        self.amt = amt
+        self.factor = 1/amt
+        self.src = src
+        self._type = "fx"
+    
+    def setAmt(self, amt):
+        self.amt = amt
+        self.factor = 1/amt
+        
+    def nextN(self, n):
+        inp = self.src.nextN(n)
+        signs = np.sign(inp)
+        return (abs(inp) ** self.factor) * signs
+        
 class passFilter:
-    def __init__(self, src, fc, fs, mode="low"):
+    def __init__(self, src, fc, fs, mode="lowpass"):
         self.src = src
         self.fc = fc
         self.fs = fs
@@ -18,6 +39,7 @@ class passFilter:
         self.b, self.a = sig.butter(5, w, mode)
         
         self.initial = sig.lfiltic(self.b, self.a, np.zeros(1), np.zeros(1))
+        self._type = "fil"
     
     def setMode(self, mode):
         self.mode = mode
@@ -41,6 +63,7 @@ class mixer:
     def __init__(self, src, mix):
         self.mix = mix
         self.src = src
+        self._type = "mix"
         
     def nextN(self, n):
         samples = [s.nextN(n) for s in self.src]
@@ -66,6 +89,8 @@ class envelope:
         self.r = np.linspace(S,0, int(R*fs))
         self.adlen = len(self.ad)
         self.rlen = len(self.r)
+        
+        self._type = "env"
     
     def trig(self):
         self.triggered = True
@@ -113,6 +138,7 @@ class sineOsc:
         self.f = f
         self.idx = 0
         self.phase = self.idx / (fs/f)
+        self._type = "osc"
     
     def setF(self, f):
         self.wave = np.sin(np.linspace(0, 2*np.pi, int(self.fs/f)))
@@ -137,6 +163,7 @@ class squareOsc(sineOsc):
         self.f = f
         self.idx = 0
         self.phase = self.idx / (fs/f)
+        self._type = "osc"
     
     def setF(self, f):
         self.wave = sig.square(np.linspace(0, 2*np.pi, int(self.fs/f)))
@@ -155,6 +182,7 @@ class sawOsc(sineOsc):
         self.f = f
         self.idx = 0
         self.phase = self.idx / (fs/f)
+        self._type = "osc"
         
     def setF(self, f):
         self.wave = sig.sawtooth(np.linspace(0, 2*np.pi, int(self.fs/f)))
@@ -170,16 +198,18 @@ class synth:
         self.fs = fs
         self.blockTime = blockTime
         self.blockSize = int(fs * blockTime)
-        self.oscs = [squareOsc(440, fs)]
-        self.envs = [envelope(3,0.5,0.2,0.7, self.oscs[0], fs)]
-        self.others = []
-        self.output = self.envs[0]
+        self.oscs = []
+        self.envs = []
+        self.modules = []
+        self.output = None
         self.audioStream = sd.OutputStream(samplerate=fs, blocksize=self.blockSize, channels=1, callback=self.audio_callback)
         self.midiPort = mido.open_input(callback=self.midi_callback)
     
     def audio_callback(self, outdata, frames, time, flags):
-        o = self.output.nextN(self.blockSize)
-        outdata[:,0] = o - np.mean(o)
+        if self.output:
+            o = self.output.nextN(self.blockSize)
+            outdata[:,0] = o - np.mean(o)
+            
         return None
         
     def midi_callback(self, message):
@@ -194,8 +224,22 @@ class synth:
             for env in self.envs:
                 env.rel()
     
+    def setModulesSeries(self, modules):
+        self.modules = modules
+        self.envs = []
+        self.oscs = []
+        for module in modules:
+            if module._type == "env":
+                self.envs.append(module)
+            elif module._type == "osc":
+                self.oscs.append(module)
+        
+        self.output = modules[-1]
+    
     def run(self):
+        print("Initialising synth...")
         with self.audioStream:
+            print("Synth ready!")
             while 1:
                 pass
 
@@ -212,11 +256,13 @@ sinosc = sineOsc(250, 44100)
 squosc = squareOsc(250, 44100)
 OSCS = [squosc]
 mix = mixer(OSCS ,[0.5,0.5])
-env = envelope(0.1,0.5,0.2,0.7, mix, 44100)
-fil = passFilter(env, 500, 44100)
+env = envelope(0.1,0.5,0.2,0.7, sinosc, 44100)
+dist = distortion(env, 5)
+fil = passFilter(dist, 10000, 44100)
 
 
 syn = synth(44100, 0.05)
+syn.setModulesSeries([sinosc, env, dist, fil])
 syn.run()
 
         
