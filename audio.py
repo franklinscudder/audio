@@ -73,16 +73,17 @@ class mixer:
         return mix
         
 class envelope:
-    def __init__(self, A, D, S, R, src, fs):
+    def __init__(self, A, D, S, R, src, fs, retrig=False):
         self.A = A
         self.D = D
         self.S = S
         self.R = R 
         self.fs = fs
         self.src = src
+        self.retrig = retrig
 
-        self.triggered = 0
-        self.releasing = 0
+        self.triggered = False
+        self.releasing = False
         self.trigIdx = 0
         self.relIdx = 0
         
@@ -91,12 +92,17 @@ class envelope:
         self.adlen = len(self.ad)
         self.rlen = len(self.r)
         
+        w = 10000 / (fs / 2) 
+        self.b, self.a = sig.butter(5, w, "lowpass")
+        self.initial = sig.lfiltic(self.b, self.a, np.zeros(1), np.zeros(1))
+        
         self._type = "env"
     
     def trig(self):
         self.triggered = True
         self.releasing = False
-        self.trigIdx = 0
+        if (self.trigIdx >= self.adlen and self.relIdx >= self.rlen) or self.retrig:
+            self.trigIdx = 0
     
     def rel(self):
         self.triggered = False
@@ -109,7 +115,7 @@ class envelope:
         i=0
         out = np.zeros(n)
         while i < n:
-            if self.triggered:
+            if self.triggered :
                 if self.trigIdx < self.adlen:
                     out[i] = inp[i] * self.ad[self.trigIdx]
                     self.currentLevel = self.ad[self.trigIdx]
@@ -127,7 +133,10 @@ class envelope:
                     out[i] = 0
                     
             i += 1
-            
+        
+        out, zf = sig.lfilter(self.b, self.a, out, zi=self.initial)
+        self.initial = zf
+        
         return out
         
 
@@ -245,7 +254,7 @@ class synth:
     def run(self):
         print("Initialising synth...")
         with self.audioStream:
-            print("Synth ready!")
+            print(f"Synth ready! Listenting on MIDI port: {self.midiPort.name}")
             while 1:
                 plt.cla()
                 plt.plot(self.wave)
@@ -267,7 +276,7 @@ sinosc = sineOsc(250, 44100)
 squosc = squareOsc(250, 44100)
 OSCS = [squosc]
 mix = mixer(OSCS ,[0.5,0.5])
-env = envelope(0.1,0.5,0.2,0.7, sinosc, 44100)
+env = envelope(1,1,0.5,3, sinosc, 44100)
 dist = distortion(env, 5)
 fil = passFilter(dist, 10000, 44100)
 
