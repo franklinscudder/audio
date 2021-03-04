@@ -144,17 +144,16 @@ class sineOsc:
     def setF(self, f):
         self.wave = np.sin(np.linspace(0, 2*np.pi, int(self.fs/f)))
         self.samples = len(self.wave)
-        self.idx = int((self.phase/2*np.pi) *  self.samples)
+        self.idx = int((self.phase/(2*np.pi)) *  self.samples)
         self.f = f
-        
-    
+         
     def nextN(self, n):
         out = []
         for i in range(n):
             out.append(self.wave[self.idx])
             self.idx += 1
             self.idx = self.idx % self.samples
-            print(self.idx)
+            
         
         self.phase = (self.idx / self.samples) * 2 * np.pi
         return np.array(out)
@@ -214,8 +213,8 @@ class synth:
         if self.output:
             o = self.output.nextN(self.blockSize)
             outdata[:,0] = o - np.mean(o)
-            self.wave[self.blockSize:] = self.wave[:-self.blockSize]
-            self.wave[:self.blockSize] = o
+            self.wave[:-self.blockSize] = self.wave[self.blockSize:]
+            self.wave[-self.blockSize:] = o
              
         return None
         
@@ -250,6 +249,8 @@ class synth:
             while 1:
                 plt.cla()
                 plt.plot(self.wave)
+                plt.grid(True)
+                plt.ylim([-1,1])
                 plt.show()
                 plt.pause(0.001)
 
@@ -258,7 +259,7 @@ def noteToFreq(note):
     return (2**((note-69)/12))*440
  
 
-
+### smooth envelope retrigger!!!!
 
 
 plt.ion()
