@@ -86,6 +86,7 @@ class envelope:
         self.releasing = False
         self.trigIdx = 0
         self.relIdx = 0
+        self.currentLevel = 0
         
         self.ad = np.concatenate([np.linspace(0,1,int(A*fs)),np.linspace(1,S,int(D*fs))])
         self.r = np.linspace(S,0, int(R*fs))
@@ -138,11 +139,12 @@ class envelope:
         self.initial = zf
         
         return out
-        
 
-class sineOsc:
-    def __init__(self, f, fs):
-        self.samples = int(fs/f)
+class osc:
+    def __init__(self, f, fs, waveFcn):
+        self.waveFcn = waveFcn.waveFcn
+        self.params = waveFcn.params
+        self.samples = fs/f
         self.fs = fs
         self.f = f
         self.idx = 0
@@ -150,10 +152,60 @@ class sineOsc:
         self._type = "osc"
     
     def setF(self, f):
-        self.wave = np.sin(np.linspace(0, 2*np.pi, int(self.fs/f)))
-        self.samples = len(self.wave)
-        self.idx = int((self.phase/(2*np.pi)) *  self.samples)
         self.f = f
+        self.samples = self.fs/f
+        self.idx = int((self.phase/(2*np.pi)) *  self.samples)
+    
+    def getModulations(self, n):
+        out = {}
+        for key in self.params.keys():
+            param = self.params[key]
+            if type(param) == modulator:   
+                out[key] = modulator.nextN(n, self.BlockId)
+            else:
+                out[key] = modulator
+                
+        return out
+         
+    def nextN(self, n):
+        out = []
+        for i in range(n):
+            out.append(self.waveFcn(self.phase, **self.params)) #check this
+            self.idx += 1
+            self.idx = self.idx % self.samples
+            self.phase = (self.idx / self.samples) * 2 * np.pi
+
+        return np.array(out)    
+
+class waveFcn:
+    def __init__(self, wave):
+        self.waveFcn = wave
+        if wave = SINE:
+            self.params = {}
+        elif wave == SAW:
+            self.params = {"width": 0.0}
+        elif wave == SQUARE:
+            self.params = {"duty": 0.5}
+
+
+SINE = waveFcn(np.sin)
+SAW = waveFcn(sig.sawtooth)
+SQUARE = waveFcn(sig.square)
+
+
+class sineOsc:
+    def __init__(self, f, fs):
+        self.samples = fs/f
+        self.fs = fs
+        self.f = f
+        self.idx = 0
+        self.phase = (self.idx / self.samples) * 2 * np.pi
+        self._type = "osc"
+    
+    def setF(self, f):
+        self.f = f
+        self.samples = self.fs/f
+        self.idx = int((self.phase/(2*np.pi)) *  self.samples)
          
     def nextN(self, n):
         out = []
@@ -186,8 +238,7 @@ class squareOsc(sineOsc):
 
 class sawtoothOsc():
     def __init__(self, f, fs, width=1):
-        self.samples = int(fs/f)
-        self.width = width
+        self.samples = fs/f
         self.fs = fs
         self.f = f
         self.idx = 0
@@ -197,10 +248,9 @@ class sawtoothOsc():
         self.blockId = 0
         
     def setF(self, f):
-        self.wave = sig.sawtooth(np.linspace(0, 2*np.pi, int(self.fs/f)))
-        self.samples = len(self.wave)
-        self.idx = int((self.phase/(2*np.pi)) *  self.samples)
         self.f = f
+        self.samples = self.fs/f
+        self.idx = int((self.phase/(2*np.pi)) *  self.samples)
     
     def getModulations(self, n):
         out = {}
@@ -251,18 +301,17 @@ class synth:
         self.envs = []
         self.modules = []
         self.output = None
-        self.audioStream = sd.OutputStream(samplerate=fs, blocksize=self.blockSize, latency="low", channels=1, callback=self.audio_callback)
+        self.audioStream = sd.OutputStream(samplerate=fs, blocksize=0, latency="low", channels=1, callback=self.audio_callback)
         self.midiPort = mido.open_input(callback=self.midi_callback)
-        self.wave = np.zeros(self.blockSize*2)
+        self.wave = np.zeros(1000)
         
         print(self.blockSize)
     
     def audio_callback(self, outdata, frames, time, flags):
         if self.output:
-            o = self.output.nextN(self.blockSize)
-            outdata[:,0] = o - np.mean(o)
-            self.wave[:-self.blockSize] = self.wave[self.blockSize:]
-            self.wave[-self.blockSize:] = o
+            outdata[:,0] = self.output.nextN(frames)
+            #self.wave[:-frames] = self.wave[frames:]
+            #self.wave[-frames:] = o
              
         return None
         
@@ -277,6 +326,9 @@ class synth:
         if message.type == "note_off":
             for env in self.envs:
                 env.rel()
+        
+        while self.midiPort.poll():
+            pass
     
     def setModulesSeries(self, modules):
         self.modules = modules
@@ -300,12 +352,13 @@ class synth:
         with self.audioStream:
             print(f"Synth ready!\nListenting on MIDI port: {self.midiPort.name}")
             while 1:
-                plt.cla()
-                plt.plot(self.wave)
-                plt.grid(True)
-                plt.ylim([-1,1])
-                plt.show()
-                plt.pause(0.001)
+                pass
+                #plt.cla()
+                #plt.plot(self.wave)
+                #plt.grid(True)
+                #plt.ylim([-1,1])
+                #plt.show()
+                #plt.pause(0.001)
 
 
 def noteToFreq(note):
@@ -323,7 +376,7 @@ env = envelope(1,1,0.5,3, 44100)
 
 print("Initialising synth...")
 syn = synth(44100, 0.1)
-syn.setModulesSeries([sawosc, env])
+syn.setModulesSeries([sinosc, env])
 syn.run()
 
         
