@@ -144,68 +144,72 @@ class envelope:
 
 
 class osc:
-    def __init__(self, f, fs, waveFcn):
+    def __init__(self, fs, waveFcn, freq=440):
         self.waveFcn = waveFcn.waveFcn
         self.params = waveFcn.params
-        self.samples = fs/f
+        self.f = freq
+        self.samples = fs/self.f
         self.fs = fs
-        self.f = f
         self.idx = 0
         self.phase = (self.idx / self.samples) * 2 * np.pi
         self._type = "osc"
+        self.blockId = 1
     
     def setF(self, f):
         self.f = f
         self.samples = self.fs/f
         self.idx = int((self.phase/(2*np.pi)) *  self.samples)
     
+    def addModulator(self, param, modulator):
+        self.params[param] = modulator
+    
     def getModulations(self, n):
         out = {}
         for key in self.params.keys():
             param = self.params[key]
             if type(param) == modulator:   
-                out[key] = modulator.nextN(n, self.BlockId)
+                out[key] = param.nextN(n, self.blockId)
             else:
-                out[key] = modulator
-                
+                out[key] = param
+        
+        self.blockId = (self.blockId + 1) % 100        
         return out
          
     def nextN(self, n):
         out = []
+        mods = self.getModulations(n)
         for i in range(n):
-            out.append(self.waveFcn(self.phase, **self.params)) #check this
+            out.append(self.waveFcn(self.phase, **{k: v[i] for k, v in mods.items()})) #check this
             self.idx += 1
             self.idx = self.idx % self.samples
             self.phase = (self.idx / self.samples) * 2 * np.pi
-
+        
         return np.array(out)    
 
 class waveFcn:
     def __init__(self, wave, params):
-        self.waveFcn = wave
+        self.waveFcn = wave   # a function f(phase) = value, period 2*pi
         self.params = params
 
 SINE = waveFcn(np.sin, {})
-SAW = waveFcn(sig.sawtooth, {"width": 0.0})
+SAWTOOTH = waveFcn(sig.sawtooth, {"width": 0.9})
 SQUARE = waveFcn(sig.square, {"duty": 0.5})
         
 class modulator:
     def __init__(self, obj, args):
         self.obj = obj(*args)
         self.cache = None
-        self.blockId = None
+        self.BlockId = None
         
     def nextN(self, n, blockId):
-        if blockId != self.blockId:
+        if blockId != self.BlockId:
             self.cache = self.obj.nextN(n)
             
         return self.cache
 
 class synth:
-    def __init__(self, fs, blockTime):
+    def __init__(self, fs):
         self.fs = fs
-        self.blockTime = blockTime
-        self.blockSize = int(fs * blockTime)
         self.oscs = []
         self.envs = []
         self.modules = []
@@ -213,8 +217,6 @@ class synth:
         self.audioStream = sd.OutputStream(samplerate=fs, blocksize=0, latency="low", channels=1, callback=self.audio_callback)
         self.midiPort = mido.open_input(callback=self.midi_callback)
         self.wave = np.zeros(1000)
-        
-        print(self.blockSize)
     
     def audio_callback(self, outdata, frames, time, flags):
         if self.output:
@@ -275,9 +277,11 @@ def noteToFreq(note):
  
 
 plt.ion()
-sinosc = sineOsc(250, 44100)
-squosc = squareOsc(250, 44100)
-sawosc = sawtoothOsc(250, 44100)
+sinosc = osc(44100, SINE)
+mod = modulator(osc, [44100, SINE, 1])
+squosc = osc(44100, SQUARE)
+squosc.addModulator('duty', mod)
+sawosc = osc(44100, SAWTOOTH)
 # mix = mixer([0.5,0.5])
 env = envelope(1,1,0.5,3, 44100)
 # dist = distortion(5)
@@ -285,7 +289,7 @@ env = envelope(1,1,0.5,3, 44100)
 
 print("Initialising synth...")
 syn = synth(44100, 0.1)
-syn.setModulesSeries([sinosc, env])
+syn.setModulesSeries([squosc, env])
 syn.run()
 
         
