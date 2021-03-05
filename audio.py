@@ -6,6 +6,8 @@ import time
 import mido
 from matplotlib import pyplot as plt
 
+
+
 class attenuverter:
     def __init__(self, fac, src=None):
         self.src = src
@@ -140,6 +142,7 @@ class envelope:
         
         return out
 
+
 class osc:
     def __init__(self, f, fs, waveFcn):
         self.waveFcn = waveFcn.waveFcn
@@ -178,107 +181,13 @@ class osc:
         return np.array(out)    
 
 class waveFcn:
-    def __init__(self, wave):
+    def __init__(self, wave, params):
         self.waveFcn = wave
-        if wave = SINE:
-            self.params = {}
-        elif wave == SAW:
-            self.params = {"width": 0.0}
-        elif wave == SQUARE:
-            self.params = {"duty": 0.5}
+        self.params = params
 
-
-SINE = waveFcn(np.sin)
-SAW = waveFcn(sig.sawtooth)
-SQUARE = waveFcn(sig.square)
-
-
-class sineOsc:
-    def __init__(self, f, fs):
-        self.samples = fs/f
-        self.fs = fs
-        self.f = f
-        self.idx = 0
-        self.phase = (self.idx / self.samples) * 2 * np.pi
-        self._type = "osc"
-    
-    def setF(self, f):
-        self.f = f
-        self.samples = self.fs/f
-        self.idx = int((self.phase/(2*np.pi)) *  self.samples)
-         
-    def nextN(self, n):
-        out = []
-        for i in range(n):
-            out.append(np.sin(self.phase))
-            self.idx += 1
-            self.idx = self.idx % self.samples
-            self.phase = (self.idx / self.samples) * 2 * np.pi
-
-        return np.array(out)
-
-class squareOsc(sineOsc):
-    def __init__(self, f, fs, duty=0.5):
-        self.wave = sig.square(np.linspace(0, 2*np.pi, int(fs/f)), duty)
-        self.samples = len(self.wave)
-        self.fs = fs
-        self.f = f
-        self.idx = 0
-        self.phase = (self.idx / self.samples) * 2 * np.pi
-        self._type = "osc"
-    
-    def setF(self, f):
-        self.wave = sig.square(np.linspace(0, 2*np.pi, int(self.fs/f)))
-        self.samples = len(self.wave)
-        self.idx = int((self.phase/(2*np.pi)) *  self.samples)
-        self.f = f
-        
-    def setDuty(self, d):
-        self.wave = sig.square(np.linspace(0, 2*np.pi, int(fs/f)), d)
-
-class sawtoothOsc():
-    def __init__(self, f, fs, width=1):
-        self.samples = fs/f
-        self.fs = fs
-        self.f = f
-        self.idx = 0
-        self.phase = (self.idx / self.samples) * 2 * np.pi
-        self._type = "osc"
-        self.modulators = {"width":None}
-        self.blockId = 0
-        
-    def setF(self, f):
-        self.f = f
-        self.samples = self.fs/f
-        self.idx = int((self.phase/(2*np.pi)) *  self.samples)
-    
-    def getModulations(self, n):
-        out = {}
-        for key in self.modulators.keys():
-            modulator = self.modulators[key]
-            if modulator:
-                out[key] = modulator.nextN(n, self.BlockId)
-            else:
-                out[key] = modulator
-                
-        return out
-    
-    def setWidth(self, w):
-        self.width = w
-    
-    def nextN(self, n):
-        out = []
-        self.blockId = (self.blockId + 1) % 100
-        modulations = self.getModulations(n)
-        
-        for i in range(n):
-            self.width = modulations["width"] if modulations["width"] else self.width
-            out.append(sig.sawtooth(self.phase, self.width))
-            self.idx += 1
-            self.idx = self.idx % self.samples
-            self.phase = (self.idx / self.samples) * 2 * np.pi
-
-        return np.array(out)
+SINE = waveFcn(np.sin, {})
+SAW = waveFcn(sig.sawtooth, {"width": 0.0})
+SQUARE = waveFcn(sig.square, {"duty": 0.5})
         
 class modulator:
     def __init__(self, obj, args):
