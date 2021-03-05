@@ -170,7 +170,7 @@ class osc:
             if type(param) == modulator:   
                 out[key] = param.nextN(n, self.blockId)
             else:
-                out[key] = param
+                out[key] = np.array([param]*n)
         
         self.blockId = (self.blockId + 1) % 100        
         return out
@@ -220,9 +220,10 @@ class synth:
     
     def audio_callback(self, outdata, frames, time, flags):
         if self.output:
-            outdata[:,0] = self.output.nextN(frames)
-            #self.wave[:-frames] = self.wave[frames:]
-            #self.wave[-frames:] = o
+            o = self.output.nextN(frames)
+            outdata[:,0] = o
+            self.wave[:-frames] = self.wave[frames:]
+            self.wave[-frames:] = o
              
         return None
         
@@ -264,12 +265,12 @@ class synth:
             print(f"Synth ready!\nListenting on MIDI port: {self.midiPort.name}")
             while 1:
                 pass
-                #plt.cla()
-                #plt.plot(self.wave)
-                #plt.grid(True)
-                #plt.ylim([-1,1])
-                #plt.show()
-                #plt.pause(0.001)
+                plt.cla()
+                plt.plot(self.wave)
+                plt.grid(True)
+                plt.ylim([-1,1])
+                plt.show()
+                plt.pause(0.001)
 
 
 def noteToFreq(note):
@@ -288,8 +289,8 @@ env = envelope(1,1,0.5,3, 44100)
 # fil = passFilter(10000, 44100)
 
 print("Initialising synth...")
-syn = synth(44100, 0.1)
-syn.setModulesSeries([squosc, env])
+syn = synth(44100)
+syn.setModulesSeries([sawosc, env])
 syn.run()
 
         
