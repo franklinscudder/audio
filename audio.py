@@ -7,7 +7,7 @@ import mido
 from matplotlib import pyplot as plt
 
 class attenuverter:
-    def __init__(self, src, fac):
+    def __init__(self, fac, src=None):
         self.src = src
         self.fac = fac
         
@@ -15,7 +15,7 @@ class attenuverter:
         return np.clip(self.src.nextN(n) * self.fac, -0.999, 0.999)
 
 class distortion:
-    def __init__(self, src, amt):
+    def __init__(self, amt, src=None):
         self.amt = amt
         self.factor = 1/amt
         self.src = src
@@ -31,7 +31,7 @@ class distortion:
         return (abs(inp) ** self.factor) * signs
         
 class passFilter:
-    def __init__(self, src, fc, fs, mode="lowpass"):
+    def __init__(self, fc, fs, src=None, mode="lowpass"):
         self.src = src
         self.fc = fc
         self.fs = fs
@@ -61,7 +61,7 @@ class passFilter:
         return out
 
 class mixer:
-    def __init__(self, src, mix):
+    def __init__(self, mix, src=None):
         self.mix = mix
         self.src = src
         self._type = "mix"
@@ -73,7 +73,7 @@ class mixer:
         return mix
         
 class envelope:
-    def __init__(self, A, D, S, R, src, fs, retrig=False):
+    def __init__(self, A, D, S, R, fs, src=None, retrig=False):
         self.A = A
         self.D = D
         self.S = S
@@ -142,8 +142,7 @@ class envelope:
 
 class sineOsc:
     def __init__(self, f, fs):
-        self.wave = np.sin(np.linspace(0, 2*np.pi, int(fs/f)))
-        self.samples = len(self.wave)
+        self.samples = int(fs/f)
         self.fs = fs
         self.f = f
         self.idx = 0
@@ -159,12 +158,11 @@ class sineOsc:
     def nextN(self, n):
         out = []
         for i in range(n):
-            out.append(self.wave[self.idx])
+            out.append(np.sin(self.phase))
             self.idx += 1
             self.idx = self.idx % self.samples
-            
-        
-        self.phase = (self.idx / self.samples) * 2 * np.pi
+            self.phase = (self.idx / self.samples) * 2 * np.pi
+
         return np.array(out)
 
 class squareOsc(sineOsc):
@@ -174,36 +172,75 @@ class squareOsc(sineOsc):
         self.fs = fs
         self.f = f
         self.idx = 0
-        self.phase = self.idx / (fs/f)
+        self.phase = (self.idx / self.samples) * 2 * np.pi
         self._type = "osc"
     
     def setF(self, f):
         self.wave = sig.square(np.linspace(0, 2*np.pi, int(self.fs/f)))
         self.samples = len(self.wave)
+        self.idx = int((self.phase/(2*np.pi)) *  self.samples)
         self.f = f
-        self.idx = int(self.phase *  (self.fs/self.f))
         
     def setDuty(self, d):
         self.wave = sig.square(np.linspace(0, 2*np.pi, int(fs/f)), d)
 
-class sawOsc(sineOsc):
+class sawtoothOsc():
     def __init__(self, f, fs, width=1):
-        self.wave = sig.sawtooth(np.linspace(0, 2*np.pi, int(fs/f)), width)
-        self.samples = len(self.wave)
+        self.samples = int(fs/f)
+        self.width = width
         self.fs = fs
         self.f = f
         self.idx = 0
-        self.phase = self.idx / (fs/f)
+        self.phase = (self.idx / self.samples) * 2 * np.pi
         self._type = "osc"
+        self.modulators = {"width":None}
+        self.blockId = 0
         
     def setF(self, f):
         self.wave = sig.sawtooth(np.linspace(0, 2*np.pi, int(self.fs/f)))
         self.samples = len(self.wave)
+        self.idx = int((self.phase/(2*np.pi)) *  self.samples)
         self.f = f
-        self.idx = int(self.phase *  (self.fs/self.f))
+    
+    def getModulations(self, n):
+        out = {}
+        for key in self.modulators.keys():
+            modulator = self.modulators[key]
+            if modulator:
+                out[key] = modulator.nextN(n, self.BlockId)
+            else:
+                out[key] = modulator
+                
+        return out
     
     def setWidth(self, w):
-        self.wave = sig.sawtooth(np.linspace(0, 2*np.pi, int(fs/f)), w)
+        self.width = w
+    
+    def nextN(self, n):
+        out = []
+        self.blockId = (self.blockId + 1) % 100
+        modulations = self.getModulations(n)
+        
+        for i in range(n):
+            self.width = modulations["width"] if modulations["width"] else self.width
+            out.append(sig.sawtooth(self.phase, self.width))
+            self.idx += 1
+            self.idx = self.idx % self.samples
+            self.phase = (self.idx / self.samples) * 2 * np.pi
+
+        return np.array(out)
+        
+class modulator:
+    def __init__(self, obj, args):
+        self.obj = obj(*args)
+        self.cache = None
+        self.blockId = None
+        
+    def nextN(self, n, blockId):
+        if blockId != self.blockId:
+            self.cache = self.obj.nextN(n)
+            
+        return self.cache
 
 class synth:
     def __init__(self, fs, blockTime):
@@ -214,9 +251,11 @@ class synth:
         self.envs = []
         self.modules = []
         self.output = None
-        self.audioStream = sd.OutputStream(samplerate=fs, blocksize=self.blockSize, channels=1, callback=self.audio_callback)
+        self.audioStream = sd.OutputStream(samplerate=fs, blocksize=self.blockSize, latency="low", channels=1, callback=self.audio_callback)
         self.midiPort = mido.open_input(callback=self.midi_callback)
         self.wave = np.zeros(self.blockSize*2)
+        
+        print(self.blockSize)
     
     def audio_callback(self, outdata, frames, time, flags):
         if self.output:
@@ -243,18 +282,23 @@ class synth:
         self.modules = modules
         self.envs = []
         self.oscs = []
+        lastModule = None
         for module in modules:
             if module._type == "env":
                 self.envs.append(module)
+                module.src = lastModule
             elif module._type == "osc":
                 self.oscs.append(module)
+            else:
+                module.src = lastModule
+            
+            lastModule = module
         
         self.output = modules[-1]
     
     def run(self):
-        print("Initialising synth...")
         with self.audioStream:
-            print(f"Synth ready! Listenting on MIDI port: {self.midiPort.name}")
+            print(f"Synth ready!\nListenting on MIDI port: {self.midiPort.name}")
             while 1:
                 plt.cla()
                 plt.plot(self.wave)
@@ -268,21 +312,18 @@ def noteToFreq(note):
     return (2**((note-69)/12))*440
  
 
-### smooth envelope retrigger!!!!
-
-
 plt.ion()
 sinosc = sineOsc(250, 44100)
 squosc = squareOsc(250, 44100)
-OSCS = [squosc]
-mix = mixer(OSCS ,[0.5,0.5])
-env = envelope(1,1,0.5,3, sinosc, 44100)
-dist = distortion(env, 5)
-fil = passFilter(dist, 10000, 44100)
+sawosc = sawtoothOsc(250, 44100)
+# mix = mixer([0.5,0.5])
+env = envelope(1,1,0.5,3, 44100)
+# dist = distortion(5)
+# fil = passFilter(10000, 44100)
 
-
-syn = synth(44100, 0.05)
-syn.setModulesSeries([sinosc, env])
+print("Initialising synth...")
+syn = synth(44100, 0.1)
+syn.setModulesSeries([sawosc, env])
 syn.run()
 
         
