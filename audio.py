@@ -200,16 +200,16 @@ def square(x, duty=0.5):
         return f1
         
     f2 = -(g*(x-duty))
-    elif -1 < f2 < 1:
+    if -1 < f2 < 1:
         return f2
             
     f3 = g*(x-(2*np.pi))
-    elif -1 < f3 < 1:
+    if -1 < f3 < 1:
         return f3
     
-    elif x <= duty:
+    if x <= duty:
         return 1.0
-    elif x> duty:
+    if x> duty:
         return -1.0
         
 def sawtri(x, shape=0.5):
@@ -221,11 +221,11 @@ def sawtri(x, shape=0.5):
         return f1
     
     f2 = (-2*(x-np.pi))/(2*shape + 1e-9)
-    elif -1 < f2 < 1:
+    if -1 < f2 < 1:
         return f2
     
     f3 = (x-(2*np.pi))/(np.pi-shape)
-    elif -1 < f3 < 1:
+    if -1 < f3 < 1:
         return f3
 
 
@@ -326,8 +326,9 @@ plt.ion()
 sinosc = osc(F_S, SINE)
 mod = modulator(osc, [F_S, SINE, 1], sineToPos)
 squosc = osc(F_S, SQUARE)
-squosc.addModulator('duty', mod)
+
 sawosc = osc(F_S, SAWTRI)
+sawosc.addModulator('shape', mod)
 # mix = mixer([0.5,0.5])
 env = envelope(.1,1,0.7,.3, F_S)
 # dist = distortion(5)
@@ -337,6 +338,11 @@ print("Initialising synth...")
 syn = synth(F_S)
 syn.setModulesSeries([sawosc, env])
 
+## play a file
+# with syn.audioStream:
+    # for msg in mido.MidiFile('midi2.mid').play():
+        # syn.midi_callback(msg)
+        
 syn.run(True)
 
 
