@@ -190,24 +190,62 @@ class waveFcn:
         self.waveFcn = wave   # a function f(phase) = value, period 2*pi
         self.params = params
 
+def square(x, duty=0.5):
+    x = x%(2*np.pi)
+    duty *= 2*np.pi
+    g = 50
+    
+    f1 = g*x
+    if -1 < f1 < 1:
+        return f1
+        
+    f2 = -(g*(x-duty))
+    elif -1 < f2 < 1:
+        return f2
+            
+    f3 = g*(x-(2*np.pi))
+    elif -1 < f3 < 1:
+        return f3
+    
+    elif x <= duty:
+        return 1.0
+    elif x> duty:
+        return -1.0
+        
+def sawtri(x, shape=0.5):
+    x = x%(2*np.pi)
+    shape *= np.pi/2
+    
+    f1 = x/(np.pi-shape)
+    if -1 < f1 < 1:
+        return f1
+    
+    f2 = (-2*(x-np.pi))/(2*shape + 1e-9)
+    elif -1 < f2 < 1:
+        return f2
+    
+    f3 = (x-(2*np.pi))/(np.pi-shape)
+    elif -1 < f3 < 1:
+        return f3
+
+
 SINE = waveFcn(np.sin, {})
-SAWTOOTH = waveFcn(sig.sawtooth, {"width": 0.0})
-SQUARE = waveFcn(sig.square, {"duty": 0.5})
+SAWTRI = waveFcn(sawtri, {"shape": 0.0})
+SQUARE = waveFcn(square, {"duty": 0.5})
 
 def sineToPos(y):
     return (y+1)/2
         
 class modulator:
-    def __init__(self, obj, args, scaleFcn, amt):
+    def __init__(self, obj, args, scaleFcn):
         self.obj = obj(*args)
         self.cache = None
         self.BlockId = None
         self.scaleFcn = scaleFcn
-        self.amt = amt
         
     def nextN(self, n, blockId):
         if blockId != self.BlockId:
-            self.cache = self.scaleFcn(self.obj.nextN(n)) * self.amt
+            self.cache = self.scaleFcn(self.obj.nextN(n))
             
         return self.cache
 
@@ -268,6 +306,7 @@ class synth:
             print(f"Synth ready!\nListenting on MIDI port: {self.midiPort.name}")
             
             while 1:
+                
                 if scope:
                     plt.cla()
                     plt.plot(self.wave)
@@ -285,20 +324,20 @@ def noteToFreq(note):
 F_S = 44100
 plt.ion()
 sinosc = osc(F_S, SINE)
-mod = modulator(osc, [F_S, SINE, 1], sineToPos, 0.5)
+mod = modulator(osc, [F_S, SINE, 1], sineToPos)
 squosc = osc(F_S, SQUARE)
 squosc.addModulator('duty', mod)
-sawosc = osc(F_S, SAWTOOTH)
+sawosc = osc(F_S, SAWTRI)
 # mix = mixer([0.5,0.5])
-env = envelope(1,1,0.5,3, F_S)
+env = envelope(.1,1,0.7,.3, F_S)
 # dist = distortion(5)
 # fil = passFilter(10000, F_S)
 
 print("Initialising synth...")
 syn = synth(F_S)
-syn.setModulesSeries([squosc, env])
+syn.setModulesSeries([sawosc, env])
 
-syn.run()
+syn.run(True)
 
 
         
