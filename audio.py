@@ -6,8 +6,9 @@ import time
 import mido
 from matplotlib import pyplot as plt
 import cProfile, pstats
-
-
+from linetimer import CodeTimer
+import pickle
+from numba import njit, jit
 
 class attenuverter:
     def __init__(self, fac, src=None):
@@ -28,47 +29,179 @@ class distortion:
         self.amt = amt
         self.factor = 1/amt
         
+        
     def nextN(self, n):
         inp = self.src.nextN(n)
         signs = np.sign(inp)
         return (abs(inp) ** self.factor) * signs
+
+
+def wToN(w):
+    x = w/2
+    LHS = 0.707*(x - (x**3)/6 + (x**5)/120)# - (x**7)/5040
+    N = 1
+    while True:
+        xn = x*N % (2*np.pi)
+        RHS = (xn - (xn**3)/6 + (xn**5)/120)/N# - (xn**7)/5040)/N
+        if RHS <= LHS:
+            return N 
+        else:
+            N += 1
+
+
+def fastAverage(array):
+    l = len(array)
+    skip = (l // 300) + 1
+    return sum(array[::skip])/(l/skip)
+    
+    
+class tableSynth:
+    def __init__(self, fs, wave="square"):
+        if wave == "square":
+            self.table = np.load("sqTable.npy", mmap_mode="r")
         
+        self.f = 440
+        self.fs = fs
+        self.phase = 0   # goes 0 to 30k
+        self.dp = int((30000 / self.fs) /  (1/self.f))
+        self._type = "osc"
+        self.blockId = 1
+        self.params = {"cutoff": 1}
+    
+    def addModulator(self, param, modulator):
+        self.params[param] = modulator
+    
+    def setF(self, f):
+        self.f = f
+        self.dp = int((30000 / self.fs) /  (1/self.f))
+        #self.dp = int(np.pi*2 / (self.fs/f))
+        
+    def getModulations(self, n):
+        out = {}
+        for key in self.params.keys():
+            param = self.params[key]
+            if type(param) == modulator:   
+                out[key] = param.nextN(n, self.blockId)
+            else:
+                out[key] = np.array([param]*n)
+        
+        self.blockId = (self.blockId + 1) % 100        
+        return out
+        
+    
+    def scaleCutoff(self, modulation):
+        #print(modulation)
+        return int((((modulation+1)/2) * 7997) + 1)
+        
+    
+    def nextN(self, n):
+        mods = self.getModulations(n)
+        out = np.zeros(n)
+        for i in range(n):
+            self.fc = self.scaleCutoff(mods["cutoff"][i])
+            #print(self.fc)
+            #print(self.fc)
+            self.phase = (self.phase + self.dp) % 30000
+            #print(self.fc, self.phase)
+            out[i] = self.table[self.fc, self.phase]
+        
+        return out
+                
+      
 class passFilter:
     def __init__(self, fc, fs, src=None, mode="lowpass"):
         self.src = src
         self.fc = fc
         self.fs = fs
         self.mode = mode
-        w = fc / (fs / 2) 
-        self.b, self.a = sig.butter(5, w, mode)
-        
-        self.initial = sig.lfiltic(self.b, self.a, np.zeros(1), np.zeros(1))
+        w = fc / (fs / 2)
+        self.N = wToN(w)
+        self.memory = []
+        self.params = {"cutoff": fc}
         self._type = "fil"
+        self.blockId = 1
+        with open("FilterLookup.dat", "rb") as f:
+            self.lookup = pickle.load(f)
     
     def setMode(self, mode):
         self.mode = mode
         w = self.fc / (self.fs / 2) 
         self.b, self.a = sig.butter(5, w, mode)
+    
+    def addModulator(self, param, modulator):
+        self.params[param] = modulator
+    
+    
+    def getModulations(self, n):
+        out = {}
+        for key in self.params.keys():
+            param = self.params[key]
+            if type(param) == modulator:   
+                out[key] = param.nextN(n, self.blockId)
+            else:
+                out[key] = np.array([param]*n)
         
+        self.blockId = (self.blockId + 1) % 100        
+        return out
+    
+    
     def setFc(self, fc):
         self.fc = fc
         w = fc / (self.fs / 2) 
         self.b, self.a = sig.butter(5, w, self.mode)
+        
     
-    def nextN(self, n):
+    def scaleFcMod(self, mod):
+        return ((mod+1)/2)[100]
+    
+    # 
+    # def nextN(self, n):
+        # mods = self.getModulations(n)
+        # for i in range(n):
+            # self.setFc(self.scaleFcMod(mods["cutoff"][i]))
+            
+    
+    # 
+    # def nextN(self, n):
+        # mods = self.getModulations(n)
+        # inp = self.src.nextN(n)
+        # out = []
         
-        inp = self.src.nextN(n)
-        out, zf = sig.lfilter(self.b, self.a, inp, zi=self.initial)
-        self.initial = zf
+        # inp = np.pad(inp, 50, mode="edge")
+        # fft = np.fft.rfft(inp)
+        # print(len(fft))
+        # fft = fft[:int(self.scaleFcMod(mods["cutoff"])*len(fft))+200]
+        # print(len(fft))
+        # out = np.fft.irfft(fft,n=n)
         
-        return out
+        # return out
+    # def scaleFcMod(self, mod):
+        # return 20 + ((mod+1)/2) * 1e3
+    
+    # def nextN(self, n):
+        # mods = self.getModulations(n)
+        # inp = self.src.nextN(n)
+        # out = []
+        # for i, sample in enumerate(inp):
+            # fc = self.scaleFcMod(mods["cutoff"][i])
+            # w = 2*np.pi*(fc / self.fs)
+            # self.N = self.lookup[round(w)]
+            # #print(self.N)
+            # while len(self.memory) > self.N:
+                # del self.memory[0]
+            # self.memory.append(sample)
+            # outS = fastAverage(self.memory)
+            # out.append(outS)
+            
+        # return np.array(out)
 
 class mixer:
     def __init__(self, mix, src=None):
         self.mix = mix
         self.src = src
         self._type = "mix"
-        
+    
+    
     def nextN(self, n):
         samples = [s.nextN(n) for s in self.src]
         mix = sum([s*self.mix[i] for i, s in enumerate(samples)])
@@ -96,9 +229,9 @@ class envelope:
         self.adlen = len(self.ad)
         self.rlen = len(self.r)
         
-        w = 10000 / (fs / 2) 
-        self.b, self.a = sig.butter(5, w, "lowpass")
-        self.initial = sig.lfiltic(self.b, self.a, np.zeros(1), np.zeros(1))
+        #w = 10000 / (fs / 2) 
+        #self.b, self.a = sig.butter(5, w, "lowpass")
+        #self.initial = sig.lfiltic(self.b, self.a, np.zeros(1), np.zeros(1))
         
         self._type = "env"
     
@@ -113,7 +246,7 @@ class envelope:
         self.releasing = True
         self.relIdx = 0
         
-        
+      
     def nextN(self, n):
         inp = self.src.nextN(n)
         i=0
@@ -138,8 +271,8 @@ class envelope:
                     
             i += 1
         
-        out, zf = sig.lfilter(self.b, self.a, out, zi=self.initial)
-        self.initial = zf
+        #out, zf = sig.lfilter(self.b, self.a, out, zi=self.initial)
+        #self.initial = zf
         
         return out
 
@@ -173,12 +306,14 @@ class osc:
         
         self.blockId = (self.blockId + 1) % 100        
         return out
+        
          
     def nextN(self, n):
         out = []
         mods = self.getModulations(n)
         for i in range(n):
-            sample = self.waveFcn(self.phase, **{k: v[i] for k, v in mods.items()})
+            dc = {k: v[i] for k, v in mods.items()}
+            sample = self.waveFcn(self.phase, **dc)
             #print(sample)
             out.append(sample) #check this
             self.phase += self.dp
@@ -189,6 +324,7 @@ class waveFcn:
     def __init__(self, wave, params):
         self.waveFcn = wave   # a function f(phase) = value, period 2*pi
         self.params = params
+
 
 def square(x, duty=0.5):
     x = x%(2*np.pi)
@@ -211,6 +347,7 @@ def square(x, duty=0.5):
         return 1.0
     if x> duty:
         return -1.0
+
         
 def sawtri(x, shape=0.5):
     x = x%(2*np.pi)
@@ -233,16 +370,23 @@ SINE = waveFcn(np.sin, {})
 SAWTRI = waveFcn(sawtri, {"shape": 0.0})
 SQUARE = waveFcn(square, {"duty": 0.5})
 
+def eye(x):
+    return x
+
 def sineToPos(y):
     return (y+1)/2
         
 class modulator:
-    def __init__(self, obj, args, scaleFcn):
+    def __init__(self, obj, args, scaleFcn=None):
         self.obj = obj(*args)
         self.cache = None
         self.BlockId = None
-        self.scaleFcn = scaleFcn
-        
+        if scaleFcn:
+            self.scaleFcn = scaleFcn
+        else:
+            self.scaleFcn = eye
+            
+       
     def nextN(self, n, blockId):
         if blockId != self.BlockId:
             self.cache = self.scaleFcn(self.obj.nextN(n))
@@ -320,30 +464,27 @@ class synth:
 
 def noteToFreq(note):
     return (2**((note-69)/12))*440
- 
-F_S = 44100
-plt.ion()
-sinosc = osc(F_S, SINE)
-mod = modulator(osc, [F_S, SINE, 1], sineToPos)
-squosc = osc(F_S, SQUARE)
 
-sawosc = osc(F_S, SAWTRI)
-sawosc.addModulator('shape', mod)
-# mix = mixer([0.5,0.5])
-env = envelope(.1,1,0.7,.3, F_S)
-# dist = distortion(5)
-# fil = passFilter(10000, F_S)
-
-print("Initialising synth...")
-syn = synth(F_S)
-syn.setModulesSeries([sawosc, env])
-
-## play a file
-# with syn.audioStream:
-    # for msg in mido.MidiFile('midi2.mid').play():
-        # syn.midi_callback(msg)
-        
-syn.run(True)
+if __name__ == "__main__":
+    F_S = 44100
+    plt.ion()
+    
+    print("Initialising synth...")
+    #sinosc = osc(F_S, SINE)
+    mod = modulator(osc, [F_S, SINE, 1])
+    osc = tableSynth(F_S)
+    osc.addModulator("cutoff", mod)
+    env = envelope(0.1, 0.3, 0.7, 0.7, F_S)
+    
+    syn = synth(F_S)
+    syn.setModulesSeries([osc, env])
+    
+    ## play a file
+    # with syn.audioStream:
+        # for msg in mido.MidiFile('midi2.mid').play():
+            # syn.midi_callback(msg)
+            
+    syn.run(True)
 
 
         

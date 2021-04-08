@@ -125,3 +125,6 @@ dmypy.json
 .pyre/
 test.py
 *.mid
+sqTable.npy
+sqTable.pkl
+FilterLookup.dat
